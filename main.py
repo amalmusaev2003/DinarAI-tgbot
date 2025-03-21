@@ -3,7 +3,7 @@ import logging
 import aiohttp
 import asyncio
 import re
-from flask import Flask, request
+from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.fsm.context import FSMContext
@@ -34,8 +34,8 @@ storage = RedisStorage.from_url(f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}')
 bot = Bot(token=token)
 dp = Dispatcher(storage=storage)
 
-# Создание Flask-приложения
-app = Flask(__name__)
+# Создание FastAPI-приложения
+app = FastAPI()
 
 # Безопасное удаление сообщений
 async def safe_delete_message(bot, chat_id, message_id):
@@ -149,20 +149,21 @@ async def echo(message: types.Message):
     await message.answer("Пожалуйста, задайте ваш вопрос об исламских финансах.")
 
 # Маршрут для проверки активности
-@app.route('/')
-def home():
-    return "I'm alive"
+@app.get("/")
+async def home():
+    return {"message": "I'm alive"}
 
 # Маршрут для webhook
-@app.route('/webhook', methods=['POST'])
-async def webhook():
-    update = types.Update(**request.get_json())
+@app.post("/webhook")
+async def webhook(request: Request):
+    update = types.Update(**(await request.json()))
     await dp.process_update(update)
-    return 'OK'
+    return {"status": "OK"}
 
 # Установка webhook при запуске
+@app.on_event("startup")
 async def on_startup():
-    webhook_url = 'https://dinarai-tgbot.onrender.com/webhook'
+    webhook_url = 'https://dinarai-tgbot.onrender.com/webhook'  # Замените на ваш URL
     current_webhook = await bot.get_webhook_info()
     if current_webhook.url != webhook_url:
         await bot.set_webhook(webhook_url)
@@ -170,11 +171,7 @@ async def on_startup():
     else:
         logging.info("Webhook уже установлен")
 
-# Основная функция
-async def main():
-    logging.info("Starting bot")
-    await on_startup()
-    app.run(host='0.0.0.0', port=75)
-
-if __name__ == '__main__':
-    asyncio.run(main())
+# Запуск приложения
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=75)
