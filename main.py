@@ -9,8 +9,9 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
+# Настройка логирования с подробным выводом
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Получение токена
 token = os.getenv('TG_BOT_API_KEY')
@@ -25,31 +26,22 @@ dp = Dispatcher()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     webhook_url = 'https://your-service.onrender.com/webhook'  # Замените на ваш URL
+    logger.info("Проверка текущего webhook...")
     current_webhook = await bot.get_webhook_info()
     if current_webhook.url != webhook_url:
+        logger.info(f"Установка webhook на {webhook_url}")
         await bot.set_webhook(webhook_url)
-        logging.info(f"Webhook установлен на {webhook_url}")
+        logger.info(f"Webhook успешно установлен на {webhook_url}")
     else:
-        logging.info("Webhook уже установлен")
+        logger.info("Webhook уже установлен")
     yield
+    logger.info("Удаление webhook перед завершением...")
     await bot.delete_webhook()
     await bot.session.close()
-    logging.info("Webhook удален и сессия закрыта")
+    logger.info("Webhook удален и сессия закрыта")
 
 # Создание FastAPI-приложения с lifespan
 app = FastAPI(lifespan=lifespan)
-
-# Безопасное удаление сообщений
-async def safe_delete_message(bot, chat_id, message_id):
-    try:
-        await bot.delete_message(chat_id=chat_id, message_id=message_id)
-    except TelegramBadRequest as e:
-        if "message to delete not found" in str(e):
-            logging.warning(f"Message {message_id} already deleted or not found")
-        else:
-            logging.error(f"Error deleting message: {e}")
-    except Exception as e:
-        logging.error(f"Error deleting message: {e}")
 
 # Безопасная отправка сообщений с обработкой лимитов
 async def safe_send_message(message_obj, text, parse_mode=None):
@@ -57,13 +49,14 @@ async def safe_send_message(message_obj, text, parse_mode=None):
     retry_delay = 1
     for attempt in range(max_retries):
         try:
+            logger.info(f"Отправка сообщения: {text[:50]}...")
             return await message_obj.answer(text, parse_mode=parse_mode)
         except TelegramRetryAfter as e:
             retry_after = e.retry_after
-            logging.warning(f"Rate limit hit. Waiting for {retry_after} seconds. Attempt {attempt+1}/{max_retries}")
+            logger.warning(f"Лимит Telegram, ждем {retry_after} секунд, попытка {attempt+1}/{max_retries}")
             await asyncio.sleep(retry_after)
         except Exception as e:
-            logging.error(f"Error sending message: {e}")
+            logger.error(f"Ошибка отправки сообщения: {e}")
             if attempt == max_retries - 1:
                 raise
             await asyncio.sleep(retry_delay)
@@ -84,22 +77,18 @@ def markdown_to_html(text: str) -> str:
 async def handle_message(message: types.Message):
     chat_id = message.chat.id
     question = message.text
-
-    # Отправляем временное сообщение
-    try:
-        processing_message = await safe_send_message(message, "Обрабатываю ваш запрос...")
-    except Exception as e:
-        logging.error(f"Failed to send processing message: {e}")
-        return
+    logger.info(f"Получено сообщение от {chat_id}: {question}")
 
     # Отправка запроса к API
     try:
         payload = {"chat_id": chat_id, "question": question}
+        logger.info(f"Отправка запроса к API: {payload}")
         async with aiohttp.ClientSession() as session:
             api_host = os.getenv("API_HOST")
             if api_host is None:
                 raise ValueError("API_HOST environment variable is not set")
             async with session.post(f"{api_host}/chat", json=payload, timeout=aiohttp.ClientTimeout(total=240)) as response:
+                logger.info(f"Получен ответ от API с кодом {response.status}")
                 if response.status == 200:
                     data = await response.json()
                     answer = markdown_to_html(data.get("answer", "Извините, не удалось получить ответ."))
@@ -109,37 +98,36 @@ async def handle_message(message: types.Message):
                         response_text += "📚 <b>Источники:</b>\n"
                         for i, source in enumerate(sources, 1):
                             response_text += f"{i}. {markdown_to_html(source)}\n"
-                    # Удаляем временное сообщение
-                    if processing_message:
-                        await safe_delete_message(bot, processing_message.chat.id, processing_message.message_id)
-                    # Отправляем ответ
                     await safe_send_message(message, response_text, parse_mode=ParseMode.HTML)
+                    logger.info("Ответ успешно отправлен пользователю")
                 else:
-                    if processing_message:
-                        await safe_delete_message(bot, processing_message.chat.id, processing_message.message_id)
                     await safe_send_message(message, "Извините, произошла ошибка при обработке вашего запроса.")
+                    logger.error(f"API вернул ошибку: {response.status}")
     except asyncio.TimeoutError:
-        logging.error("API request timed out")
-        if processing_message:
-            await safe_delete_message(bot, processing_message.chat.id, processing_message.message_id)
+        logger.error("API запрос превысил время ожидания")
         await safe_send_message(message, "Извините, запрос занял слишком много времени.")
     except Exception as e:
-        logging.error(f"Error processing question: {e}")
-        if processing_message:
-            await safe_delete_message(bot, processing_message.chat.id, processing_message.message_id)
+        logger.error(f"Ошибка обработки запроса: {e}")
         await safe_send_message(message, "Извините, произошла ошибка.")
 
 # Маршрут для проверки активности
 @app.get("/")
 async def home():
+    logger.info("Получен запрос к /")
     return {"message": "I'm alive"}
 
 # Маршрут для webhook
 @app.post("/webhook")
 async def webhook(request: Request):
-    update = types.Update(**(await request.json()))
-    await dp.feed_update(bot, update)
-    return {"status": "OK"}
+    try:
+        logger.info("Получен запрос к /webhook")
+        update = types.Update(**(await request.json()))
+        await dp.feed_update(bot, update)
+        logger.info("Обновление успешно обработано")
+        return {"status": "OK"}
+    except Exception as e:
+        logger.error(f"Ошибка в webhook: {e}")
+        return {"status": "ERROR"}, 500
 
 # Запуск приложения
 if __name__ == "__main__":
