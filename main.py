@@ -11,6 +11,8 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
 
+from background import keep_alive
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -174,6 +176,7 @@ async def echo(message: types.Message):
 
 async def main():
     logging.info("Starting bot")
+    keep_alive()
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == '__main__':
