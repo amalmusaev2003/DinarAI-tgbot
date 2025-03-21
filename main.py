@@ -4,6 +4,7 @@ import aiohttp
 import asyncio
 import re
 from fastapi import FastAPI, Request
+from contextlib import asynccontextmanager
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.fsm.context import FSMContext
@@ -34,8 +35,25 @@ storage = RedisStorage.from_url(f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}')
 bot = Bot(token=token)
 dp = Dispatcher(storage=storage)
 
-# Создание FastAPI-приложения
-app = FastAPI()
+# Lifespan-обработчик для запуска и завершения приложения
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Код при старте приложения
+    webhook_url = 'https://dinarai-tgbot.onrender.com/webhook'
+    current_webhook = await bot.get_webhook_info()
+    if current_webhook.url != webhook_url:
+        await bot.set_webhook(webhook_url)
+        logging.info(f"Webhook установлен на {webhook_url}")
+    else:
+        logging.info("Webhook уже установлен")
+    yield
+    # Код при завершении приложения (опционально)
+    await bot.delete_webhook()
+    await bot.session.close()
+    logging.info("Webhook удален и сессия закрыта")
+
+# Создание FastAPI-приложения с lifespan
+app = FastAPI(lifespan=lifespan)
 
 # Безопасное удаление сообщений
 async def safe_delete_message(bot, chat_id, message_id):
@@ -157,19 +175,8 @@ async def home():
 @app.post("/webhook")
 async def webhook(request: Request):
     update = types.Update(**(await request.json()))
-    await dp.process_update(update)
+    await dp.feed_update(bot, update)
     return {"status": "OK"}
-
-# Установка webhook при запуске
-@app.on_event("startup")
-async def on_startup():
-    webhook_url = 'https://dinarai-tgbot.onrender.com/webhook'  # Замените на ваш URL
-    current_webhook = await bot.get_webhook_info()
-    if current_webhook.url != webhook_url:
-        await bot.set_webhook(webhook_url)
-        logging.info(f"Webhook установлен на {webhook_url}")
-    else:
-        logging.info("Webhook уже установлен")
 
 # Запуск приложения
 if __name__ == "__main__":
