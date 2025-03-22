@@ -1,5 +1,6 @@
 import os
 import logging
+import signal
 import aiohttp
 import asyncio
 import re
@@ -10,6 +11,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
+
+from keep_alive import keep_alive
+keep_alive()
 
 
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +36,6 @@ if token is None:
 storage = RedisStorage.from_url(f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}')
 bot = Bot(token=token)
 dp = Dispatcher(storage=storage)
-
 
 async def safe_delete_message(bot, chat_id, message_id):
     try:

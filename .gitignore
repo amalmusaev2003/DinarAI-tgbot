@@ -2,3 +2,4 @@ venv
 logs
 .env
 .env-render
+__pycache__
