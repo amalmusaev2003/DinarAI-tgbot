@@ -22,7 +22,7 @@ def register_bot(bot_instance):
 async def cmd_start(message: types.Message, state: FSMContext):
     """Handle /start command: reset state and send welcome message."""
     await state.clear()
-    
+
     await message.answer(
         "Ассаламу алейкум! 👋\n\n"
         "Я бот-ассистент по исламским финансам. Задайте мне вопрос, и я постараюсь на него ответить.\n\n"
@@ -74,17 +74,18 @@ async def process_question(message: types.Message, state: FSMContext):
                     data = await response.json()
                     # Convert markdown to HTML
                     answer = markdown_to_html(data.get("answer", "Извините, не удалось получить ответ."))
-                    sources = data.get("sources", [])
-                    
-                    # Формирование ответа
+                    sources = data.get("urls", [])
+                    logging.info(f"Sources (raw): {sources}")
+                    logging.info(f"Sources type: {type(sources)}")
+
                     response_text = f"{answer}\n\n"
-                    
-                    # Добавление источников, если они есть
+
+                    # Add urls if they are exist
                     if sources:
                         response_text += "📚 <b>Источники:</b>\n"
                         for i, source in enumerate(sources, 1):
                             response_text += f"{i}. {markdown_to_html(source)}\n"
-                    
+
                     # Safely delete processing message
                     if processing_message:
                         await safe_delete_message(bot, processing_message.chat.id, processing_message.message_id)
@@ -95,7 +96,7 @@ async def process_question(message: types.Message, state: FSMContext):
                     # Safely delete processing message
                     if processing_message:
                         await safe_delete_message(bot, processing_message.chat.id, processing_message.message_id)
-                    
+
                     await safe_send_message(message, "Извините, произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте позже.")
     except asyncio.TimeoutError:
         logging.error("API request timed out")
